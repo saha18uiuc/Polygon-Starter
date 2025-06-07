@@ -11,6 +11,8 @@ from polygon.smt.ast import *
 from polygon.ast.expressions.operator import Operator
 from polygon.variables import Variable
 
+from polygon.ast.if_expression import IfExpression
+
 
 def Max(args):
     def Max2(x, y):
@@ -632,3 +634,22 @@ class ExpressionEncoder:
             return Int(diff), Bool(False)
         else:
             raise NotImplementedError
+        
+    def visit_if_expression(self, if_expr: IfExpression):
+        condition = self.visit(if_expr.condition)
+        true_expr = self.visit(if_expr.true_expr)
+        false_expr = self.visit(if_expr.false_expr)
+        return self.solver.If(condition, true_expr, false_expr)
+    
+    def visit_filtered_aggregate(self, node):
+        if node.condition:
+            # Create temporary filtered table
+            original = self.current_table
+            self.current_table = self._filter_table(original, node.condition)
+        
+        result = self.visit(node.aggregate)
+        
+        if node.condition:
+            self.current_table = original
+            
+        return result

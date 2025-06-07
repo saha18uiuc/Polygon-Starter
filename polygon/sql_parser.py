@@ -27,6 +27,8 @@ from polygon.ast.project import Project
 from polygon.ast.scan import Scan
 from polygon.ast.union import Union as UnionAST
 
+from polygon.ast.if_expression import IfExpression
+
 SQL_NULL = {"null": None}
 SPACE_STRING = "__SPACE_STRING__"
 TMP_PLACEHOLDER = "TEMPORARY_PLACEHOLDER"
@@ -506,6 +508,34 @@ class SQLParser:
 
         operator = next(iter(exp))
 
+        if operator.lower() == 'if':
+            args = exp[operator]  # [condition, true, false]
+            return IfExpression(
+                self.parse_expression(args[0]),
+                self.parse_expression(args[1]),
+                self.parse_expression(args[2])
+            )
+
+        # Add this aggregate function handling section
+        if operator.lower() in ['count', 'sum', 'avg', 'min', 'max']:
+            # Handle aggregate arguments
+            args = []
+            if isinstance(exp[operator], list):
+                args = [self.parse_expression(arg) for arg in exp[operator]]
+            else:
+                args = [self.parse_expression(exp[operator])]
+            
+            function_call = Expression(operator=operator, args=args)
+            
+            # Handle FILTER clause if present
+            if 'filter' in exp:
+                from polygon.ast.filtered_aggregate import FilteredAggregate
+                return FilteredAggregate(
+                    aggregate=function_call,
+                    filter_condition=self.parse_expression(exp['filter'])
+                )
+            return function_call
+
         # cast as type: {'cast': [{'date': '2020-05-03'}, {'date': {}}]}
         if exp[operator] == {}:
             return Literal(operator)
@@ -608,6 +638,21 @@ class SQLParser:
                 then = self.parse_expression(case['then'])
             cases.append((when, then))
         return CaseWhen(cases, default)
+
+    def parse_if_expression(self, exp) -> IfExpression:
+        """
+        Parse an IF expression of the form: IF(condition, true_expr, false_expr)
+        The input exp should be a list containing the three components:
+        [condition, true_expr, false_expr]
+        """
+        if not isinstance(exp, list) or len(exp) != 3:
+            raise ParserSyntaxError(f"Invalid IF expression: {exp}")
+        
+        condition = self.parse_expression(exp[0])
+        true_expr = self.parse_expression(exp[1])
+        false_expr = self.parse_expression(exp[2])
+    
+        return IfExpression(condition, true_expr, false_expr)
 
     def table_names_used(self, ast):
         def extract_table_name(ast_json):

@@ -53,10 +53,10 @@ def main():
         if not eq:
             print('NEQ', total_time)
             logger.info(cex)
-            with MySQLTester(DB_CONFIG, schema) as tester:
-                tester.create_all_databases([cex], constraints)
-                rejected = tester.test_pair(*queries)
-                print(rejected)
+            # with MySQLTester(DB_CONFIG, schema) as tester:
+                # tester.create_all_databases([cex], constraints)
+                # rejected = tester.test_pair(*queries)
+                # print(rejected)
         else:
             print('EQ')
 
