@@ -12,7 +12,9 @@ from polygon.ast.expressions.operator import Operator
 from polygon.variables import Variable
 
 from polygon.ast.if_expression import IfExpression
+from polygon.ast.filtered_aggregate import FilteredAggregate
 
+from polygon.schemas import TableSchema
 
 def Max(args):
     def Max2(x, y):
@@ -467,40 +469,45 @@ class ExpressionEncoder:
             if node.operator == 'round':
                 return node.args[0].accept(self)
 
-            # aggregate functions
+            # Handle aggregate functions
             if node.operator in ['min', 'max', 'count', 'sum', 'avg']:
-                if node.operator == 'count' and not node.args[0] and isinstance(node.args[1], Attribute) and node.args[1].name == '*':
-                    return Sum([Not(Deleted(self.table.table_id, tuple_id)) for tuple_id in range(self.table.bound)]), Bool(False)
-
-                agg_exp_encoder = ExpressionEncoder(self.table, self.env)
-                to_be_aggregated = []
+                # Check if this is a filtered aggregate
+                is_filtered = isinstance(node, FilteredAggregate)
+                agg_node = node.aggregate if is_filtered else node
+                
+                # Prepare tuples for aggregation
+                valid_tuples = []
                 for tuple_id in range(self.table.bound):
-                    # ret is a (val, null, deleted) pair
-                    ret = (
-                        *agg_exp_encoder.expression_for_tuple(node.args[1], tuple_id),
-                        Deleted(self.table.table_id, tuple_id)
-                    )
-                    to_be_aggregated.append(ret)
+                    # Skip deleted tuples
+                    if Deleted(self.table.table_id, tuple_id):
+                        continue
+                        
+                    # For filtered aggregates, check condition first
+                    if is_filtered and node.condition:
+                        cond_val, cond_null = self.expression_for_tuple(node.condition, tuple_id)
+                        if Or(cond_null, Not(cond_val)):  # Skip if condition fails or is null
+                            continue
+                    
+                    # Get the value to aggregate
+                    agg_expr = agg_node.args[1] if len(agg_node.args) > 1 else agg_node.args[0]
+                    val, null = self.expression_for_tuple(agg_expr, tuple_id)
+                    valid_tuples.append((val, null, Bool(False)))  # Mark as not deleted
 
-                match node.operator:
-                    case 'max':
-                        return Max(to_be_aggregated)
-                    case 'min':
-                        return Min(to_be_aggregated)
-                    case 'count':
-                        if node.args[0]:
-                            return Count_Distinct(to_be_aggregated)
-                        return Count(to_be_aggregated)
-                    case 'sum':
-                        if node.args[0]:
-                            return Sum_Distinct(to_be_aggregated)
-                        return AggSum(to_be_aggregated)
-                    case 'avg':
-                        if node.args[0]:
-                            return Avg_Distinct(to_be_aggregated)
-                        return Avg(to_be_aggregated)
-                    case _:
-                        raise NotImplementedError
+                if not valid_tuples:  # Handle empty results
+                    return Int(0), Bool(True)
+                    
+                # Process aggregation based on type
+                if node.operator == 'max':
+                    return Max(valid_tuples)
+                elif node.operator == 'min':
+                    return Min(valid_tuples)
+                elif node.operator == 'count':
+                    distinct = len(agg_node.args) > 1 and agg_node.args[0]
+                    return Count_Distinct(valid_tuples) if distinct else Count(valid_tuples)
+                elif node.operator == 'sum':
+                    return Sum_Distinct(valid_tuples) if distinct else AggSum(valid_tuples)
+                elif node.operator == 'avg':
+                    return Avg_Distinct(valid_tuples) if distinct else Avg(valid_tuples)
 
             if node.operator == 'coalesce':
                 def Next(idx):
@@ -636,20 +643,11 @@ class ExpressionEncoder:
             raise NotImplementedError
         
     def visit_if_expression(self, if_expr: IfExpression):
-        condition = self.visit(if_expr.condition)
-        true_expr = self.visit(if_expr.true_expr)
-        false_expr = self.visit(if_expr.false_expr)
-        return self.solver.If(condition, true_expr, false_expr)
-    
-    def visit_filtered_aggregate(self, node):
-        if node.condition:
-            # Create temporary filtered table
-            original = self.current_table
-            self.current_table = self._filter_table(original, node.condition)
+        condition_val, condition_null = if_expr.condition.accept(self)
+        true_val, true_null = if_expr.true_expr.accept(self)
+        false_val, false_null = if_expr.false_expr.accept(self)
         
-        result = self.visit(node.aggregate)
-        
-        if node.condition:
-            self.current_table = original
-            
-        return result
+        return (
+            If(And(Not(condition_null), condition_val), true_val, false_val),
+            Or([condition_null, If(condition_val, true_null, false_null)])
+        )

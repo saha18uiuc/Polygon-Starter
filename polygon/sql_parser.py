@@ -495,7 +495,6 @@ class SQLParser:
             return Literal(exp)
 
         # special case: DISTINCT aggregate function call
-        # TODO: refactor
         if len(exp) == 2 and 'distinct' in exp:
             distinct = exp['distinct']
             agg_fun = list(exp.keys())[1]
@@ -508,6 +507,7 @@ class SQLParser:
 
         operator = next(iter(exp))
 
+        # Handle IF statements
         if operator.lower() == 'if':
             args = exp[operator]  # [condition, true, false]
             return IfExpression(
@@ -516,25 +516,28 @@ class SQLParser:
                 self.parse_expression(args[2])
             )
 
-        # Add this aggregate function handling section
-        if operator.lower() in ['count', 'sum', 'avg', 'min', 'max']:
-            # Handle aggregate arguments
-            args = []
-            if isinstance(exp[operator], list):
-                args = [self.parse_expression(arg) for arg in exp[operator]]
+        # Handle aggregate functions
+        if operator.lower() in ['min', 'max', 'count', 'sum', 'avg']:
+            # Handle DISTINCT
+            distinct = False
+            if 'distinct' in exp:
+                distinct = exp['distinct']
+                value = exp[operator]
             else:
-                args = [self.parse_expression(exp[operator])]
-            
-            function_call = Expression(operator=operator, args=args)
-            
-            # Handle FILTER clause if present
+                value = exp[operator]
+
+            # Parse the value expression
+            parsed_value = self.parse_expression(value[0]) if isinstance(value, list) else self.parse_expression(value)
+
+            # Handle FILTER clause
             if 'filter' in exp:
                 from polygon.ast.filtered_aggregate import FilteredAggregate
                 return FilteredAggregate(
-                    aggregate=function_call,
-                    filter_condition=self.parse_expression(exp['filter'])
+                    aggregate=Expression(operator, [distinct, parsed_value]),
+                    condition=self.parse_expression(exp['filter']['where'])
                 )
-            return function_call
+            
+            return Expression(operator, [distinct, parsed_value])
 
         # cast as type: {'cast': [{'date': '2020-05-03'}, {'date': {}}]}
         if exp[operator] == {}:
@@ -638,21 +641,6 @@ class SQLParser:
                 then = self.parse_expression(case['then'])
             cases.append((when, then))
         return CaseWhen(cases, default)
-
-    def parse_if_expression(self, exp) -> IfExpression:
-        """
-        Parse an IF expression of the form: IF(condition, true_expr, false_expr)
-        The input exp should be a list containing the three components:
-        [condition, true_expr, false_expr]
-        """
-        if not isinstance(exp, list) or len(exp) != 3:
-            raise ParserSyntaxError(f"Invalid IF expression: {exp}")
-        
-        condition = self.parse_expression(exp[0])
-        true_expr = self.parse_expression(exp[1])
-        false_expr = self.parse_expression(exp[2])
-    
-        return IfExpression(condition, true_expr, false_expr)
 
     def table_names_used(self, ast):
         def extract_table_name(ast_json):

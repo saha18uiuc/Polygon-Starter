@@ -43,45 +43,50 @@ class TestSchemaBuilder:
         }
 
 def create_test_env():
-    """Create a test environment with properly configured schemas"""
-    builder = TestSchemaBuilder()
-    
+    """Create a test environment with properly configured schemas following example.py structure"""
     schema = [
-        builder.create_table("employees", [
-            ("id", "INT"),
-            ("name", "TEXT"),
-            ("salary", "INT"),
-            ("dept", "TEXT"),
-            ("gender", "TEXT")
-        ], pkeys=["id"]),
-        
-        builder.create_table("sales", [
-            ("product", "TEXT"),
-            ("amount", "INT"),
-            ("region", "TEXT")
-        ], pkeys=["product"])
+        {
+            "TableName": "employees",
+            "PKeys": [{"Name": "id", "Type": "int"}],
+            "FKeys": [],
+            "Others": [
+                {"Name": "name", "Type": "varchar"},
+                {"Name": "salary", "Type": "int"},
+                {"Name": "dept", "Type": "varchar"},
+                {"Name": "gender", "Type": "varchar"}
+            ]
+        },
+        {
+            "TableName": "sales",
+            "PKeys": [{"Name": "product", "Type": "varchar"}],
+            "FKeys": [],
+            "Others": [
+                {"Name": "amount", "Type": "int"},
+                {"Name": "region", "Type": "varchar"}
+            ]
+        }
     ]
     
-    # Create environment with higher bound to avoid index issues
-    env = Environment(schema=schema, constraints=[], bound=10)
+    constraints = [
+        {'distinct': ['employees.id']},
+        {'distinct': ['sales.product']}
+    ]
     
-    # Load test data directly with proper column mapping
+    env = Environment(schema, constraints, bound=3, time_budget=60)
+    
+    # Load test data
     env.db.tables = {
-        1: [
+        1: [  # employees
             {"id": 1, "name": "Alice", "salary": 80000, "dept": "Engineering", "gender": "F"},
             {"id": 2, "name": "Bob", "salary": 120000, "dept": "Engineering", "gender": "M"},
             {"id": 3, "name": "Charlie", "salary": 70000, "dept": "HR", "gender": "F"}
         ],
-        2: [
+        2: [  # sales
             {"product": "Widget", "amount": 100, "region": "North"},
             {"product": "Widget", "amount": 200, "region": "South"},
             {"product": "Gadget", "amount": 150, "region": "North"}
         ]
     }
-    
-    # Initialize schemas properly
-    for table_id, table_data in env.db.tables.items():
-        env.db.schemas[table_id] = schema[table_id-1]["TableSchema"]
     
     return env
 
